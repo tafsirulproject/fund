@@ -628,6 +628,8 @@
     </div>
 
     <!-- MAIN JAVASCRIPT LOGIC -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
     <script>
         // Tour Config Constants
         const ADMIN_PASSWORD = "885522";
@@ -641,14 +643,20 @@
         const defaultMembers = [];
         const defaultLogs = [];
 
+        // Supabase Cloud Database: project "fund"
+        const SUPABASE_URL = 'https://suafsqzeegzvnkwicmmg.supabase.co';
+        const SUPABASE_PUBLIC_KEY = 'sb_publishable_GxVdL1Y-m726QvC9umy9ow_tayNgPtS';
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLIC_KEY);
+        let cloudConnected = false;
+
         // Global State Variables
         let members = [];
         let logs = [];
         let isAdmin = false; // Default: Member View (Read-Only)
 
         // App Initialization
-        window.onload = function() {
-            loadState();
+        window.onload = async function() {
+            await loadState();
             updateViewModeUI();
             renderApp();
         };
@@ -741,32 +749,74 @@
             }
         }
 
-        // LocalStorage Helpers
-        function loadState() {
-            const storedMembers = localStorage.getItem('tour_members_db');
-            const storedLogs = localStorage.getItem('tour_logs_db');
-
-            if (storedMembers) {
-                members = JSON.parse(storedMembers);
-            } else {
-                members = defaultMembers;
-                saveMembersState();
-            }
-
-            if (storedLogs) {
-                logs = JSON.parse(storedLogs);
-            } else {
-                logs = defaultLogs;
-                saveLogsState();
-            }
+        // Local cache + Supabase Cloud persistence
+        function memberToCloud(m) {
+            return { id: String(m.id), name: m.name, total_deposit: Number(m.totalDeposit || 0),
+                     loan_balance: Number(m.loanBalance || 0), updated_at: new Date().toISOString() };
+        }
+        function memberFromCloud(m) {
+            return { id: m.id, name: m.name, totalDeposit: Number(m.total_deposit || 0),
+                     loanBalance: Number(m.loan_balance || 0) };
+        }
+        function logToCloud(l) {
+            return { id: String(l.id), member_id: l.memberId || null, member_name: l.memberName || '',
+                     type: l.type, amount: Number(l.amount || 0), note: l.note || '',
+                     log_date: l.date || new Date().toLocaleString('bn-BD') };
+        }
+        function logFromCloud(l) {
+            return { id: l.id, memberId: l.member_id || null, memberName: l.member_name,
+                     type: l.type, amount: Number(l.amount || 0), note: l.note || '', date: l.log_date };
         }
 
-        function saveMembersState() {
+        async function loadState() {
+            try {
+                const [mr, lr] = await Promise.all([
+                    supabaseClient.from('tree_members').select('*').order('updated_at', { ascending: true }),
+                    supabaseClient.from('tree_logs').select('*').order('created_at', { ascending: false })
+                ]);
+                if (mr.error) throw mr.error;
+                if (lr.error) throw lr.error;
+                cloudConnected = true;
+                members = (mr.data || []).map(memberFromCloud);
+                logs = (lr.data || []).map(logFromCloud);
+                if (!members.length && !logs.length) {
+                    members = JSON.parse(localStorage.getItem('tour_members_db') || '[]');
+                    logs = JSON.parse(localStorage.getItem('tour_logs_db') || '[]');
+                    await saveMembersState();
+                    await saveLogsState();
+                }
+                localStorage.setItem('tour_members_db', JSON.stringify(members));
+                localStorage.setItem('tour_logs_db', JSON.stringify(logs));
+                showToast('☁️ Supabase সংযুক্ত', 'success');
+            } catch (err) {
+                console.error('Supabase connection failed:', err);
+                cloudConnected = false;
+                members = JSON.parse(localStorage.getItem('tour_members_db') || '[]');
+                logs = JSON.parse(localStorage.getItem('tour_logs_db') || '[]');
+                showToast('Cloud সংযোগ হয়নি; লোকাল ডাটা দেখানো হচ্ছে', 'error');
+            }
+        }
+        async function saveMembersState() {
             localStorage.setItem('tour_members_db', JSON.stringify(members));
+            if (!cloudConnected) return;
+            if (!members.length) {
+                const { error } = await supabaseClient.from('tree_members').delete().neq('id', '__none__');
+                if (error) { console.error(error); showToast('Cloud member sync failed', 'error'); }
+                return;
+            }
+            const { error } = await supabaseClient.from('tree_members').upsert(members.map(memberToCloud));
+            if (error) { console.error(error); showToast('Cloud-এ মেম্বার সেভ হয়নি', 'error'); }
         }
-
-        function saveLogsState() {
+        async function saveLogsState() {
             localStorage.setItem('tour_logs_db', JSON.stringify(logs));
+            if (!cloudConnected) return;
+            if (!logs.length) {
+                const { error } = await supabaseClient.from('tree_logs').delete().neq('id', '__none__');
+                if (error) { console.error(error); showToast('Cloud log sync failed', 'error'); }
+                return;
+            }
+            const { error } = await supabaseClient.from('tree_logs').upsert(logs.map(logToCloud));
+            if (error) { console.error(error); showToast('Cloud-এ লেনদেন সেভ হয়নি', 'error'); }
         }
 
         // Calculate Days Elapsed from Nov 16, 2026 to Current Date
@@ -1044,7 +1094,7 @@
         }
 
         // Action Handlers (Guarded by isAdmin)
-        function handleAddMember(e) {
+        async function handleAddMember(e) {
             e.preventDefault();
             if (!isAdmin) return;
 
@@ -1069,15 +1119,16 @@
                 logs.unshift({
                     id: 'l_' + Date.now(),
                     date: new Date().toLocaleString('bn-BD'),
+                    memberId: newMember.id,
                     memberName: name,
                     type: 'deposit',
                     amount: initialDeposit,
                     note: 'প্রাথমিক জমা'
                 });
-                saveLogsState();
+                await saveLogsState();
             }
 
-            saveMembersState();
+            await saveMembersState();
             renderApp();
             closeModal('add-member-modal');
             nameInput.value = '';
@@ -1085,7 +1136,7 @@
             showToast(`নতুন মেম্বার "${name}" সফলভাবে যুক্ত করা হয়েছে!`);
         }
 
-        function handleDeposit(e) {
+        async function handleDeposit(e) {
             e.preventDefault();
             if (!isAdmin) return;
 
@@ -1102,21 +1153,22 @@
                 logs.unshift({
                     id: 'l_' + Date.now(),
                     date: new Date().toLocaleString('bn-BD'),
+                    memberId: member.id,
                     memberName: member.name,
                     type: 'deposit',
                     amount: amount,
                     note: note || 'সাধারণ জমা'
                 });
 
-                saveMembersState();
-                saveLogsState();
+                await saveMembersState();
+                await saveLogsState();
                 renderApp();
                 closeModal('deposit-modal');
                 showToast(`৳${amount} টাকা "${member.name}"-এর অ্যাকাউন্টে জমা হয়েছে!`);
             }
         }
 
-        function handleLoanAction(e) {
+        async function handleLoanAction(e) {
             e.preventDefault();
             if (!isAdmin) return;
 
@@ -1144,6 +1196,7 @@
                 logs.unshift({
                     id: 'l_' + Date.now(),
                     date: new Date().toLocaleString('bn-BD'),
+                    memberId: member.id,
                     memberName: member.name,
                     type: 'loan_issue',
                     amount: amount,
@@ -1162,6 +1215,7 @@
                 logs.unshift({
                     id: 'l_' + Date.now(),
                     date: new Date().toLocaleString('bn-BD'),
+                    memberId: member.id,
                     memberName: member.name,
                     type: 'loan_repay',
                     amount: amount,
@@ -1171,8 +1225,8 @@
                 showToast(`"${member.name}" ৳${amount} টাকা লোন পরিশোধ করেছেন!`);
             }
 
-            saveMembersState();
-            saveLogsState();
+            await saveMembersState();
+            await saveLogsState();
             renderApp();
             closeModal('loan-modal');
         }
@@ -1200,9 +1254,10 @@
             openConfirmModal(
                 `মেম্বার সরিয়ে নিতে চান?`,
                 `আপনি কি নিশ্চিত যে "${member.name}"-কে তালিকা থেকে স্থায়ীভাবে মুছে ফেলতে চান?`,
-                function() {
+                async function() {
                     members = members.filter(m => m.id !== id);
-                    saveMembersState();
+                    if (cloudConnected) { const { error } = await supabaseClient.from('tree_members').delete().eq('id', String(id)); if (error) showToast('Cloud delete failed', 'error'); }
+                    await saveMembersState();
                     renderApp();
                     showToast(`"${member.name}"-কে তালিকা থেকে মুছে ফেলা হয়েছে!`);
                 }
@@ -1215,13 +1270,13 @@
             openConfirmModal(
                 `সমস্ত ডাটা রিসেট করবেন?`,
                 `আপনি কি নিশ্চিত যে সমস্ত মেম্বার ও লেনদেনের ইতিহাস রিসেট করতে চান?`,
-                function() {
+                async function() {
                     localStorage.removeItem('tour_members_db');
                     localStorage.removeItem('tour_logs_db');
                     members = [];
                     logs = [];
-                    saveMembersState();
-                    saveLogsState();
+                    await saveMembersState();
+                    await saveLogsState();
                     renderApp();
                     showToast("সমস্ত ডাটা মুছে ফেলা হয়েছে!");
                 }
