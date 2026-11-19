@@ -113,7 +113,7 @@
                 </div>
 
                 <!-- Admin Mode Toggle / Login-Logout Button -->
-                <button id="toggle-admin-btn" onclick="handleAdminToggle()" class="h-11 px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 font-semibold text-sm rounded-xl transition duration-200 shadow-md flex items-center justify-center gap-2">
+                <button id="toggle-admin-btn" onclick="document.getElementById('admin-login-modal').classList.remove('hidden'); document.getElementById('admin-password-input').focus()" class="h-11 px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 font-semibold text-sm rounded-xl transition duration-200 shadow-md flex items-center justify-center gap-2">
                     <i id="toggle-admin-icon" class="fas fa-lock text-amber-400"></i>
                     <span id="toggle-admin-text">এডমিন লগইন</span>
                 </button>
