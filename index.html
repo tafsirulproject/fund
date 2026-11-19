@@ -784,7 +784,7 @@
                     const rows = members.map(m => ({ id: m.id, name: m.name, total_deposit: Number(m.totalDeposit || 0), loan_balance: Number(m.loanBalance || 0), updated_at: new Date().toISOString() }));
                     const { error } = await supabaseClient.from('tree_members').upsert(rows);
                     if (error) throw error;
-                    const ids = members.map(m => `"${String(m.id).replace(/"/g, '\"')}"`).join(',');
+                    const ids = members.map(m => String(m.id)).join(',');
                     const { error: deleteError } = await supabaseClient.from('tree_members').delete().not('id', 'in', `(${ids})`);
                     if (deleteError) throw deleteError;
                 } else {
@@ -801,7 +801,7 @@
                     const rows = logs.map(l => ({ id: l.id, member_id: l.memberId || null, member_name: l.memberName, type: l.type, amount: Number(l.amount || 0), note: l.note || '', log_date: l.date || new Date().toLocaleString('bn-BD') }));
                     const { error } = await supabaseClient.from('tree_logs').upsert(rows);
                     if (error) throw error;
-                    const ids = logs.map(l => `"${String(l.id).replace(/"/g, '\"')}"`).join(',');
+                    const ids = logs.map(l => String(l.id)).join(',');
                     const { error: deleteError } = await supabaseClient.from('tree_logs').delete().not('id', 'in', `(${ids})`);
                     if (deleteError) throw deleteError;
                 } else {
